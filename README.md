@@ -1,4 +1,8 @@
-# node-postgres
+# node-postgres-age
+>This project is called Postgres Extension
+>This is a fork project that can support Apache AGE from the pg client.
+>We're still in the development stage
+
 
 ![Build Status](https://github.com/brianc/node-postgres/actions/workflows/ci.yml/badge.svg)
 <span class="badge-npmversion"><a href="https://npmjs.org/package/pg" title="View this project on NPM"><img src="https://img.shields.io/npm/v/pg.svg" alt="NPM version" /></a></span>
