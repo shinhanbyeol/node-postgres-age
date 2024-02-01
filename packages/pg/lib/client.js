@@ -7,6 +7,7 @@ var TypeOverrides = require('./type-overrides')
 
 var ConnectionParameters = require('./connection-parameters')
 var Query = require('./query')
+var Cypher = require('./cypher')
 var defaults = require('./defaults')
 var Connection = require('./connection')
 const crypto = require('./crypto/utils')
@@ -623,9 +624,106 @@ class Client extends EventEmitter {
       })
     }
   }
+  
+  /**
+   * @description Cypher query function
+   * @param {*} config 
+   * @param {*} value 
+   * @param {*} callback 
+   * @returns result
+   */
+  cypher(config, values, callback) {
+    // can take in strings, config object or query object
+    var cypher
+    var result
+    var readTimeout
+    var readTimeoutTimer
+    var queryCallback
+
+    if (config === null || config === undefined) {
+      throw new TypeError('Client was passed a null or undefined query')
+    } else if (typeof config.submit === 'function') {
+      readTimeout = config.query_timeout || this.connectionParameters.query_timeout
+      result = cypher = config
+      if (typeof values === 'function') {
+        cypher.callback = cypher.callback || values
+      }
+    } else {
+      readTimeout = this.connectionParameters.query_timeout
+      cypher = new Cypher(config, values, callback)
+      if (!cypher.callback) {
+        result = new this._Promise((resolve, reject) => {
+          cypher.callback = (err, res) => (err ? reject(err) : resolve(res))
+        }).catch((err) => {
+          // replace the stack trace that leads to `TCP.onStreamRead` with one that leads back to the
+          // application that created the query
+          Error.captureStackTrace(err)
+          throw err
+        })
+      }
+    }
+
+    if (readTimeout) {
+      queryCallback = cypher.callback
+
+      readTimeoutTimer = setTimeout(() => {
+        var error = new Error('Query read timeout')
+
+        process.nextTick(() => {
+          cypher.handleError(error, this.connection)
+        })
+
+        queryCallback(error)
+
+        // we already returned an error,
+        // just do nothing if cypher completes
+        cypher.callback = () => {}
+
+        // Remove from queue
+        var index = this.queryQueue.indexOf(cypher)
+        if (index > -1) {
+          this.queryQueue.splice(index, 1)
+        }
+
+        this._pulseQueryQueue()
+      }, readTimeout)
+
+      cypher.callback = (err, res) => {
+        clearTimeout(readTimeoutTimer)
+        queryCallback(err, res)
+      }
+    }
+
+    if (this.binary && !cypher.binary) {
+      cypher.binary = true
+    }
+
+    if (cypher._result && !cypher._result._types) {
+      cypher._result._types = this._types
+    }
+
+    if (!this._queryable) {
+      process.nextTick(() => {
+        cypher.handleError(new Error('Client has encountered a connection error and is not queryable'), this.connection)
+      })
+      return result
+    }
+
+    if (this._ending) {
+      process.nextTick(() => {
+        cypher.handleError(new Error('Client was closed and is not queryable'), this.connection)
+      })
+      return result
+    }
+
+    this.queryQueue.push(cypher)
+    this._pulseQueryQueue()
+    return result
+  }
 }
 
 // expose a Query constructor
 Client.Query = Query
+Client.Cypher = Cypher
 
 module.exports = Client
